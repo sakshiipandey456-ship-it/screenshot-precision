@@ -1,0 +1,17 @@
+{
+  "source": "github:sakshiipandey456-ship-it/remix-of-screenshot-precision",
+  "app": "CashCompass AI (student finance tracker, TanStack Start + Lovable Cloud)",
+  "capabilities": [
+    {"capability": "code", "source": "src/**", "outcome": "migrate", "status": "pending", "next_action": "copy pages, components and libs into project"},
+    {"capability": "schema", "source": "types.ts: profiles, transactions, budgets, savings_goals, savings_contributions, subscriptions, notifications, challenges, advisor_messages, ai_requests", "outcome": "migrate", "status": "pending", "next_action": "recreate tables with owner-only RLS, handle_new_user trigger"},
+    {"capability": "records", "source": "old Lovable Cloud database", "outcome": "migrate", "status": "pending", "next_action": "request CSV exports after preview"},
+    {"capability": "auth identities", "source": "old Lovable Cloud auth users", "outcome": "migrate", "status": "pending", "next_action": "request user export (ids, emails) after preview"},
+    {"capability": "authorization", "source": "per-user rows (user_id)", "outcome": "migrate", "status": "pending", "next_action": "RLS user_id = auth.uid()"},
+    {"capability": "storage", "source": "private avatars bucket, path userId/...", "outcome": "migrate", "status": "pending", "next_action": "create bucket + policies; file bytes need re-upload"},
+    {"capability": "social sign-in", "source": "Google + Lovable OAuth via cloud-auth-js", "outcome": "migrate", "status": "pending", "next_action": "configure managed social auth"},
+    {"capability": "AI", "source": "Lovable AI Gateway (advisor chat, receipt scanning)", "outcome": "preserve", "status": "pending", "next_action": "LOVABLE_API_KEY provided by Cloud"},
+    {"capability": "schedules/webhooks/public endpoints", "source": "none found (cron-auth helper unused)", "outcome": "none", "status": "verified", "next_action": "none"},
+    {"capability": "secrets", "source": "LOVABLE_API_KEY only", "outcome": "preserve", "status": "pending", "next_action": "auto-provisioned"},
+    {"capability": "verification", "source": "-", "outcome": "verify", "status": "pending", "next_action": "build, sign-in, CRUD check"}
+  ]
+}
