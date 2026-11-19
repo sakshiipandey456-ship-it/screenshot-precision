@@ -278,6 +278,8 @@ export type Database = {
           is_active: boolean
           name: string
           next_payment_date: string
+          payment_method: string | null
+          start_date: string | null
           updated_at: string
           user_id: string
         }
@@ -290,6 +292,8 @@ export type Database = {
           is_active?: boolean
           name: string
           next_payment_date: string
+          payment_method?: string | null
+          start_date?: string | null
           updated_at?: string
           user_id?: string
         }
@@ -302,6 +306,8 @@ export type Database = {
           is_active?: boolean
           name?: string
           next_payment_date?: string
+          payment_method?: string | null
+          start_date?: string | null
           updated_at?: string
           user_id?: string
         }

@@ -1,9 +1,5 @@
-import { createOpenAI } from "@ai-sdk/openai";
-import { APICallError, Output, jsonSchema, streamText, type ModelMessage } from "ai";
-import type { JSONSchema7 } from "ai";
-import { createLovableAiGatewayRunIdFetch } from "./run-id.server";
+import { GatewayError, generateResponse } from "@lovable.dev/ai-gateway";
 
-const GATEWAY_URL = "https://ai.gateway.lovable.dev/v1";
 export const ADVISOR_MODEL = "openai/gpt-6.1-sol";
 
 export class AiUnavailableError extends Error {
@@ -15,83 +11,69 @@ export class AiUnavailableError extends Error {
   }
 }
 
-function provider() {
-  const apiKey = process.env["LOVABLE_API_KEY"];
-  if (!apiKey) throw new AiUnavailableError("AI is not configured for this app yet.", 401);
-  const runId = createLovableAiGatewayRunIdFetch();
-  return createOpenAI({
-    baseURL: GATEWAY_URL,
-    apiKey,
-    headers: { "Lovable-API-Key": apiKey, "X-Lovable-AIG-SDK": "vercel-ai-sdk" },
-    fetch: runId.fetch,
-  });
-}
+export type AiMessage =
+  | { role: "user" | "assistant"; content: string }
+  | { role: "user"; content: ({ type: "input_text"; text: string } | { type: "input_image"; image_url: string; detail: "auto" })[] };
 
+/** Maps gateway failures to short messages that are safe to show to users. */
 function toUnavailable(err: unknown): AiUnavailableError {
   if (err instanceof AiUnavailableError) return err;
-  if (APICallError.isInstance(err)) {
-    const status = err.statusCode ?? 500;
-    let msg = "";
-    try {
-      const body = JSON.parse(err.responseBody ?? "{}") as { message?: string; error?: { message?: string } };
-      msg = body.message ?? body.error?.message ?? "";
-    } catch {
-      /* ignore */
+  if (err instanceof GatewayError) {
+    console.error("AI gateway error", err.code, err.httpStatus, err.ids);
+    switch (err.code) {
+      case "payment_required":
+        return new AiUnavailableError("AI credits have run out for this app. The built-in analysis is shown instead.", 402);
+      case "rate_limited":
+        return new AiUnavailableError("Compass AI is busy right now. Please try again in a minute.", 429);
+      case "permission_denied":
+        return new AiUnavailableError("AI access is currently blocked for this app.", 403);
+      case "configuration_error":
+      case "authentication_error":
+        return new AiUnavailableError("AI is not configured for this app yet.", 401);
+      default:
+        return new AiUnavailableError("The AI service is temporarily unavailable.", err.httpStatus ?? 500);
     }
-    if (status === 402) return new AiUnavailableError(msg || "AI credits have run out for this app.", 402);
-    if (status === 429) return new AiUnavailableError("Compass AI is busy right now. Please try again in a minute.", 429);
-    if (status === 403) return new AiUnavailableError(msg || "AI access is currently blocked for this app.", 403);
-    return new AiUnavailableError(msg || "The AI service is temporarily unavailable.", status);
   }
+  console.error("AI call failed", err);
   return new AiUnavailableError("The AI service is temporarily unavailable.", 500);
 }
 
-const providerOptions = {
-  openai: {
-    forceReasoning: true,
-    reasoningEffort: "low",
-    reasoningSummary: "auto",
-    store: false,
-    include: ["reasoning.encrypted_content"],
-  },
-} as const;
+/** Collects the assistant's text from a Responses result. */
+function outputText(res: unknown): string {
+  const output = (res as { output?: { type?: string; content?: { type?: string; text?: string }[] }[] }).output ?? [];
+  return output
+    .filter((o) => o.type === "message")
+    .flatMap((o) => o.content ?? [])
+    .filter((c) => c.type === "output_text" && typeof c.text === "string")
+    .map((c) => c.text)
+    .join("")
+    .trim();
+}
 
-/** Streams a Responses call and returns the final text (consumed server-side). */
-export async function generateTextStreamed(instructions: string, messages: ModelMessage[], signal?: AbortSignal): Promise<string> {
+export async function generateTextStreamed(instructions: string, messages: AiMessage[]): Promise<string> {
   try {
-    const result = streamText({
-      model: provider().responses(ADVISOR_MODEL),
-      instructions,
-      messages,
-      ...(signal ? { abortSignal: signal } : {}),
-      providerOptions,
-    });
-    let text = "";
-    for await (const part of result.fullStream) {
-      if (part.type === "text-delta") text += part.text;
-      if (part.type === "error") throw part.error;
-    }
-    if (!text.trim()) throw new AiUnavailableError("Compass AI returned an empty answer.", 502);
-    return text.trim();
+    const res = await generateResponse({ model: ADVISOR_MODEL, instructions, input: messages, reasoning: { effort: "low" } });
+    const text = outputText(res);
+    if (!text) throw new AiUnavailableError("Compass AI returned an empty answer.", 502);
+    return text;
   } catch (err) {
     throw toUnavailable(err);
   }
 }
 
-/** Streams a Responses call with a strict JSON schema and returns the parsed object. */
-export async function generateObjectStreamed<T>(instructions: string, messages: ModelMessage[], schema: JSONSchema7): Promise<T> {
+/** Strict-JSON answer parsed into T. */
+export async function generateObjectStreamed<T>(instructions: string, messages: AiMessage[], schema: Record<string, unknown>): Promise<T> {
   try {
-    const result = streamText({
-      model: provider().responses(ADVISOR_MODEL),
+    const res = await generateResponse({
+      model: ADVISOR_MODEL,
       instructions,
-      messages,
-      output: Output.object({ schema: jsonSchema<T>(schema) }),
-      providerOptions,
+      input: messages,
+      reasoning: { effort: "low" },
+      text: { format: { type: "json_schema", name: "result", strict: true, schema } },
     });
-    for await (const part of result.fullStream) {
-      if (part.type === "error") throw part.error;
-    }
-    return (await result.output) as T;
+    const text = outputText(res);
+    if (!text) throw new AiUnavailableError("Compass AI returned an empty answer.", 502);
+    return JSON.parse(text) as T;
   } catch (err) {
     throw toUnavailable(err);
   }

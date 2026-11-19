@@ -43,12 +43,12 @@ export const scanReceipt = createServerFn({ method: "POST" })
           {
             role: "user",
             content: [
-              { type: "text", text: "Extract the merchant name, final total (₹), date and a likely expense category from this receipt." },
-              { type: "image", image: data.base64, mediaType: data.mediaType },
+              { type: "input_text", text: "Extract the merchant name, final total (₹), date and a likely expense category from this receipt." },
+              { type: "input_image", image_url: `data:${data.mediaType};base64,${data.base64}`, detail: "auto" },
             ],
           },
         ],
-        schema as never,
+        schema as unknown as Record<string, unknown>,
       );
       if (result.date && !/^\d{4}-\d{2}-\d{2}$/.test(result.date)) result.date = null;
       if (result.total !== null && !(result.total > 0)) result.total = null;

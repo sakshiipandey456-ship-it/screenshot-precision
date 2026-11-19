@@ -26,6 +26,8 @@ export type Subscription = {
   next_payment_date: string;
   category: string;
   is_active: boolean;
+  start_date?: string | null;
+  payment_method?: string | null;
   updated_at?: string;
 };
 export type Challenge = {
@@ -519,4 +521,153 @@ export function toCSV(rows: Record<string, string | number | null>[], columns: s
     return /[",\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
   };
   return [columns.join(","), ...rows.map((r) => columns.map((c) => esc(r[c] ?? null)).join(","))].join("\n");
+}
+
+
+// ---------- analytics ----------
+export type AnalyticsPeriod = "week" | "month" | "year";
+/** Calendar bounds of the period containing `today`, shifted back by `offset` periods. */
+export function periodBounds(period: AnalyticsPeriod, today: Date, offset = 0): Range {
+  if (period === "week") {
+    const dow = (today.getDay() + 6) % 7;
+    const start = addDays(today, -dow - 7 * offset);
+    return { from: isoDate(start), to: isoDate(addDays(start, 6)) };
+  }
+  if (period === "month") {
+    const start = addMonths(today, -offset);
+    return { from: monthStartISO(start), to: isoDate(new Date(start.getFullYear(), start.getMonth() + 1, 0)) };
+  }
+  const y = today.getFullYear() - offset;
+  return { from: `${y}-01-01`, to: `${y}-12-31` };
+}
+export function pctChange(current: number, previous: number): number | null {
+  if (previous <= 0) return null;
+  return round2(((current - previous) / previous) * 100);
+}
+export function spendingAnalytics(txns: Txn[], period: AnalyticsPeriod, today: Date) {
+  const cur = periodBounds(period, today, 0);
+  const prev = periodBounds(period, today, 1);
+  const todayISO = isoDate(today);
+  const curTx = txns.filter((t) => inRange(t, cur) && t.txn_date <= todayISO);
+  const prevTx = txns.filter((t) => inRange(t, prev));
+  const curT = totals(curTx);
+  const prevT = totals(prevTx);
+  const elapsedDays = daysBetween(parseDate(cur.from), today) + 1;
+  const byCategory = categoryBreakdown(curTx);
+  const prevByCat = new Map(categoryBreakdown(prevTx).map((c) => [c.category, c.amount]));
+  const trend =
+    period === "week"
+      ? dailySeries(txns, parseDate(cur.to) > today ? today : parseDate(cur.to), 7)
+      : period === "month"
+        ? monthlySeries(txns, today, 6)
+        : monthlySeries(txns, today, 12);
+  return {
+    current: cur,
+    previous: prev,
+    expense: curT.expense,
+    income: curT.income,
+    previousExpense: prevT.expense,
+    change: pctChange(curT.expense, prevT.expense),
+    avgDaily: round2(curT.expense / Math.max(1, elapsedDays)),
+    elapsedDays,
+    transactionCount: curTx.filter((t) => t.kind === "expense").length,
+    byCategory: byCategory.map((c) => ({ ...c, previous: round2(prevByCat.get(c.category) ?? 0), change: pctChange(c.amount, prevByCat.get(c.category) ?? 0) })),
+    topCategory: byCategory[0] ?? null,
+    trend,
+  };
+}
+
+// ---------- expense prediction ----------
+export type PredictionTier = "insufficient" | "basic" | "preliminary" | "trend" | "reliable";
+export const PREDICTION_MIN_DAYS = 7;
+/** Days of expense history → confidence tier. <7 none, 7–29 basic, 30–59 preliminary, 60–89 trend, 90+ reliable. */
+export function predictionTier(historyDays: number): PredictionTier {
+  if (historyDays < PREDICTION_MIN_DAYS) return "insufficient";
+  if (historyDays < 30) return "basic";
+  if (historyDays < 60) return "preliminary";
+  if (historyDays < 90) return "trend";
+  return "reliable";
+}
+const TIER_UNCERTAINTY: Record<Exclude<PredictionTier, "insufficient">, number> = { basic: 0.4, preliminary: 0.3, trend: 0.2, reliable: 0.12 };
+const clampGrowth = (g: number) => Math.max(-0.3, Math.min(0.3, g));
+
+/** Estimate of next month's spending from the user's own expense history. Never guesses below 7 days of history. */
+export function predictExpenses(txns: Txn[], budgets: Budget[], today: Date) {
+  const todayISO = isoDate(today);
+  const expenses = txns.filter((t) => t.kind === "expense" && t.txn_date <= todayISO);
+  const next = addMonths(today, 1);
+  const month = monthKey(next);
+  if (!expenses.length) return { tier: "insufficient" as const, historyDays: 0, needed: PREDICTION_MIN_DAYS, month };
+  const first = expenses.reduce((m, t) => (t.txn_date < m ? t.txn_date : m), expenses[0]!.txn_date);
+  const historyDays = daysBetween(parseDate(first), today) + 1;
+  const tier = predictionTier(historyDays);
+  if (tier === "insufficient") return { tier, historyDays, needed: PREDICTION_MIN_DAYS, month };
+
+  const sumBetween = (list: Txn[], fromDaysAgo: number, toDaysAgo: number) => {
+    const from = isoDate(addDays(today, -fromDaysAgo + 1));
+    const to = isoDate(addDays(today, -toDaysAgo));
+    return list.filter((t) => t.txn_date >= from && t.txn_date <= to).reduce((a, t) => a + t.amount, 0);
+  };
+  /** Daily spending rate for a list of expenses, using the method for this tier. */
+  const rate = (list: Txn[]) => {
+    if (tier === "basic") return list.reduce((a, t) => a + t.amount, 0) / historyDays;
+    const r1 = sumBetween(list, 30, 0) / 30;
+    if (tier === "preliminary") return r1;
+    const r2 = sumBetween(list, 60, 30) / 30;
+    if (tier === "trend") return r2 > 0 ? r1 * (1 + clampGrowth(r1 / r2 - 1) / 2) : r1;
+    const r3 = sumBetween(list, 90, 60) / 30;
+    const weighted = (3 * r1 + 2 * r2 + r3) / 6;
+    return r3 > 0 ? weighted * (1 + clampGrowth((r1 - r3) / r3 / 2)) : weighted;
+  };
+
+  const nextDays = daysInMonth(next);
+  const curKey = monthKey(today);
+  const budgetFor = (category: string | null) =>
+    budgets.find((b) => b.month.slice(0, 7) === month && b.category === category) ?? budgets.find((b) => b.month.slice(0, 7) === curKey && b.category === category) ?? null;
+  const cats = [...new Set(expenses.map((t) => t.category))];
+  const categories = cats
+    .map((category) => {
+      const estimate = round2(rate(expenses.filter((t) => t.category === category)) * nextDays);
+      const b = budgetFor(category);
+      return { category, estimate, budget: b ? b.amount : null };
+    })
+    .filter((c) => c.estimate > 0)
+    .sort((a, b) => b.estimate - a.estimate);
+  const estimate = round2(categories.reduce((a, c) => a + c.estimate, 0));
+  const u = TIER_UNCERTAINTY[tier];
+  const overall = budgetFor(null);
+  const catBudgetSum = categories.reduce((a, c) => a + (c.budget ?? 0), 0);
+  const budget = overall ? { amount: overall.amount, source: "overall" as const } : catBudgetSum > 0 ? { amount: round2(catBudgetSum), source: "categories" as const } : null;
+  return {
+    tier,
+    historyDays,
+    month,
+    estimate,
+    low: round2(estimate * (1 - u)),
+    high: round2(estimate * (1 + u)),
+    categories,
+    budget,
+    overBudget: budget ? round2(estimate - budget.amount) : null,
+  };
+}
+export type Prediction = ReturnType<typeof predictExpenses>;
+
+// ---------- health assessment ----------
+export type HealthBand = "Excellent" | "Good" | "Fair" | "Needs attention";
+export function healthBand(score: number): HealthBand {
+  return score >= 80 ? "Excellent" : score >= 60 ? "Good" : score >= 40 ? "Fair" : "Needs attention";
+}
+/** Score only when there's enough real data: 1+ income, 3+ expenses, spanning at least 7 days. */
+export function healthAssessment(input: { txns: Txn[]; budgets: Budget[]; goals: Goal[]; today: Date }) {
+  const incomes = input.txns.filter((t) => t.kind === "income").length;
+  const expenses = input.txns.filter((t) => t.kind === "expense").length;
+  const dates = input.txns.map((t) => t.txn_date).sort();
+  const spanDays = dates.length ? daysBetween(parseDate(dates[0]!), parseDate(dates[dates.length - 1]!)) + 1 : 0;
+  const missing: string[] = [];
+  if (incomes < 1) missing.push("at least one income entry (allowance, salary…)");
+  if (expenses < 3) missing.push(`${3 - expenses} more expense${3 - expenses === 1 ? "" : "s"}`);
+  if (spanDays < 7) missing.push("records covering at least 7 days");
+  if (missing.length) return { status: "insufficient" as const, missing };
+  const hs = healthScore(input)!;
+  return { status: "ok" as const, ...hs, band: healthBand(hs.total) };
 }
