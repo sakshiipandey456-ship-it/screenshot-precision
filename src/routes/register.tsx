@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { Field } from "@/components/auth/Field";
 import { SocialButtons } from "@/components/auth/SocialButtons";
+import { ResendConfirmation } from "@/components/auth/ResendConfirmation";
 import { supabase } from "@/integrations/supabase/client";
 import { registerSchema, toFieldErrors, type FieldErrors } from "@/lib/auth-schemas";
 import { useAuth } from "@/lib/auth-context";
@@ -34,18 +35,23 @@ function RegisterPage() {
     if (!result.success) return setErrors(toFieldErrors(result.error));
     setErrors({});
     setBusy(true);
-    const { data, error } = await supabase.auth.signUp({
-      email: result.data.email,
-      password: result.data.password,
-      options: { emailRedirectTo: `${window.location.origin}/login?redirect=${encodeURIComponent("/dashboard")}`, data: { full_name: result.data.name } },
-    });
-    setBusy(false);
-    if (error) {
-      setFormError(/registered|exists/i.test(error.message) ? "An account with this email already exists. Try signing in." : error.message);
-      return;
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: result.data.email,
+        password: result.data.password,
+        options: { emailRedirectTo: `${window.location.origin}/login?redirect=${encodeURIComponent("/dashboard")}`, data: { full_name: result.data.name } },
+      });
+      if (error) {
+        setFormError(/registered|exists/i.test(error.message) ? "An account with this email already exists. Try signing in." : error.message);
+        return;
+      }
+      if (data.session) navigate({ to: "/dashboard", replace: true });
+      else setSentTo(result.data.email);
+    } catch {
+      setFormError("We couldn't connect to create your account. Check your connection and try again.");
+    } finally {
+      setBusy(false);
     }
-    if (data.session) navigate({ to: "/dashboard", replace: true });
-    else setSentTo(result.data.email);
   }
 
   if (sentTo) {
@@ -53,9 +59,10 @@ function RegisterPage() {
       <AuthShell title="Check your email" subtitle="One last step to protect your account." footer={<Link to="/login" className="font-medium text-primary-glow hover:underline">Back to sign in</Link>}>
         <div className="rounded-2xl border border-border bg-card p-6 text-center">
           <MailCheck className="mx-auto size-10 text-success" />
-          <p className="mt-4 text-sm">We sent a confirmation link to <span className="font-medium">{sentTo}</span>.</p>
+          <p className="mt-4 text-sm">If your account needs verification, a confirmation link has been requested for <span className="font-medium">{sentTo}</span>.</p>
           <p className="mt-2 text-xs text-muted-foreground">Click it to activate your account, then sign in. Can't find it? Check your spam folder.</p>
         </div>
+        <ResendConfirmation email={sentTo} />
       </AuthShell>
     );
   }
