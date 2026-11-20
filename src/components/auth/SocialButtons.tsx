@@ -4,7 +4,6 @@ import { toast } from "sonner";
 import { LovableMark } from "@lovable.dev/cloud-auth-js/react";
 import { Button } from "@/components/ui/button";
 import { lovable } from "@/integrations/lovable/index";
-import { supabase } from "@/integrations/supabase/client";
 
 const GoogleG = () => (
   <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -18,32 +17,15 @@ const GoogleG = () => (
 export function SocialButtons({ onSignedIn }: { onSignedIn: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
 
-  async function goGoogle() {
-    setBusy("google");
+  // Both providers go through Lovable Cloud's managed OAuth, which ships its own
+  // Google credentials. Calling supabase.auth.signInWithOAuth({ provider: "google" })
+  // directly fails with "missing OAuth secret" unless a Google client secret is
+  // configured on the auth server.
+  async function signIn(provider: "google" | "lovable", label: string) {
+    setBusy(provider);
 
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          redirectTo: `${window.location.origin}/login`,
-        },
-      });
-
-      if (error) {
-        toast.error(error.message);
-        setBusy(null);
-      }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Google sign-in failed.");
-      setBusy(null);
-    }
-  }
-
-  async function goLovable() {
-    setBusy("lovable");
-
-    try {
-      const result = await lovable.auth.signInWithOAuth("lovable", {
+      const result = await lovable.auth.signInWithOAuth(provider, {
         redirect_uri: `${window.location.origin}/login`,
       });
 
@@ -53,14 +35,17 @@ export function SocialButtons({ onSignedIn }: { onSignedIn: () => void }) {
         return;
       }
 
-      if (result.redirected) return;
+      if ("redirected" in result && result.redirected) return;
 
       onSignedIn();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Lovable sign-in failed.");
+      toast.error(error instanceof Error ? error.message : `${label} sign-in failed.`);
       setBusy(null);
     }
   }
+
+  const goGoogle = () => signIn("google", "Google");
+  const goLovable = () => signIn("lovable", "Lovable");
 
   return (
     <div className="space-y-2.5">
