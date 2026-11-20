@@ -37,15 +37,30 @@ export function SocialButtons({ onSignedIn }: { onSignedIn: () => void }) {
 
     try {
       if (DIRECT_OAUTH) {
-        // Redirects to Google; the session is picked up from the URL on /login.
-        const { error } = await supabase.auth.signInWithOAuth({
+        // Build the authorize URL without leaving the page, so a misconfigured
+        // provider shows a toast here instead of a raw JSON error page.
+        const { data, error } = await supabase.auth.signInWithOAuth({
           provider: "google",
-          options: { redirectTo: `${window.location.origin}/login` },
+          options: { redirectTo: `${window.location.origin}/login`, skipBrowserRedirect: true },
         });
-        if (error) {
-          toast.error(friendlyOAuthError(error.message));
+        if (error || !data?.url) {
+          toast.error(friendlyOAuthError(error?.message ?? "Google sign-in failed."));
           setBusy(null);
+          return;
         }
+
+        // A working provider answers with a redirect to Google (opaque here);
+        // a broken one answers 400 with a JSON message.
+        const check = await fetch(data.url, { redirect: "manual", credentials: "omit" }).catch(() => null);
+        if (check && check.type !== "opaqueredirect" && !check.ok) {
+          const body = (await check.json().catch(() => null)) as { msg?: string } | null;
+          toast.error(friendlyOAuthError(body?.msg ?? "Google sign-in failed."));
+          setBusy(null);
+          return;
+        }
+
+        // Redirects to Google; the session is picked up from the URL on /login.
+        window.location.assign(data.url);
         return;
       }
 
