@@ -2,6 +2,17 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
+// Server functions read SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY from process.env. Lovable hosting injects
+// them at runtime, but other hosts (Netlify, etc.) only get the VITE_-prefixed copies that Vite inlines
+// at build time. Seed the unprefixed names from those so the backend works on any host.
+function seedSupabaseEnv() {
+  if (typeof process === "undefined" || !process.env) return;
+  const url = import.meta.env["VITE_SUPABASE_URL"] as string | undefined;
+  const key = import.meta.env["VITE_SUPABASE_PUBLISHABLE_KEY"] as string | undefined;
+  if (!process.env["SUPABASE_URL"] && url) process.env["SUPABASE_URL"] = url;
+  if (!process.env["SUPABASE_PUBLISHABLE_KEY"] && key) process.env["SUPABASE_PUBLISHABLE_KEY"] = key;
+}
+seedSupabaseEnv();
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
