@@ -2,10 +2,8 @@ import {
   addMonths,
   categoryBreakdown,
   detectAnomalies,
-  forecast,
   goalEta,
   goalProgress,
-  healthScore,
   monthBudgets,
   monthKey,
   monthLabel,
@@ -18,6 +16,8 @@ import {
   type Subscription,
   type Txn,
 } from "./finance";
+import { computeHealth } from "./health";
+import { predictNextMonth } from "./predictor";
 
 export type AdvisorData = {
   txns: Txn[];
@@ -34,11 +34,24 @@ export function buildSnapshot(d: AdvisorData, today: Date) {
   const prev = monthKey(addMonths(today, -1));
   const curTx = d.txns.filter((t) => monthKey(t.txn_date) === cur);
   const prevTx = d.txns.filter((t) => monthKey(t.txn_date) === prev);
-  const fc = forecast(d.txns, today);
-  const hs = healthScore({ txns: d.txns, budgets: d.budgets, goals: d.goals, today });
+  const fc = predictNextMonth({ txns: d.txns, budgets: d.budgets, today });
+  const hr = computeHealth({ txns: d.txns, budgets: d.budgets, goals: d.goals, today });
+  const hs = hr.status === "ok" ? hr : null;
+  // Each category this month vs its average over the previous (up to) 3 months.
+  const prevKeys = [1, 2, 3].map((i) => monthKey(addMonths(today, -i)));
+  const firstKey = d.txns.length ? monthKey(d.txns.reduce((m, t) => (t.txn_date < m ? t.txn_date : m), d.txns[0]!.txn_date)) : cur;
+  const usedPrev = prevKeys.filter((k) => k >= firstKey);
+  const categoryTrends = categoryBreakdown(curTx).map((c) => {
+    const avg = usedPrev.length ? usedPrev.reduce((a, k) => a + (categoryBreakdown(d.txns.filter((t) => monthKey(t.txn_date) === k)).find((x) => x.category === c.category)?.amount ?? 0), 0) / usedPrev.length : null;
+    return { category: c.category, thisMonthSoFar: c.amount, avgPreviousMonths: avg === null ? null : Math.round(avg), changePercent: avg ? Math.round(((c.amount - avg) / avg) * 100) : null };
+  });
   return {
     currency: "INR",
     today: today.toISOString().slice(0, 10),
+    dayOfMonth: today.getDate(),
+    daysInThisMonth: new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate(),
+    note: "thisMonth is a partial month; compare pace, not just totals.",
+    categoryTrends,
     transactionCount: d.txns.length,
     profile: d.profile ? { status: d.profile.occupation, statedMonthlyIncome: d.profile.monthly_income } : null,
     allTime: totals(d.txns),
@@ -62,7 +75,10 @@ export function buildSnapshot(d: AdvisorData, today: Date) {
       items: d.subs.filter((s) => s.is_active).map((s) => ({ name: s.name, amount: s.amount, frequency: s.frequency, next: s.next_payment_date })),
     },
     unusualSpending: detectAnomalies(d.txns, today, d.subs).map((a) => a.title + " — " + a.detail),
-    forecast: fc.status === "ok" ? { month: monthLabel(fc.month, true), estimate: fc.estimate, low: fc.low, high: fc.high, rising: fc.categories.filter((c) => c.increasing).map((c) => c.category) } : { status: "not enough history", monthsAvailable: fc.monthsAvailable },
+    forecast:
+      fc.status === "ok"
+        ? { month: monthLabel(fc.month, true), estimate: fc.estimate, low: fc.low, high: fc.high, confidence: fc.confidenceLevel, historyDays: fc.days, topCategories: fc.categories.slice(0, 4).map((c) => ({ category: c.category, estimate: c.estimate, budget: c.budget })), budgetComparison: fc.budget ? { budget: fc.budget.amount, difference: fc.budget.diff } : null }
+        : { status: "not enough history", historyDays: fc.days },
     healthScore: hs ? { total: hs.total, indicators: hs.indicators.map((i) => ({ label: i.label, score: i.score, of: i.max })) } : null,
   };
 }
@@ -113,11 +129,36 @@ export function ruleBasedAnswer(question: string, s: Snapshot): string {
     return t.length ? t.map((x) => `• ${x}`).join("\n") : "You're on a good track. Keep recording every transaction so the advice stays accurate.";
   };
 
+  const DISCRETIONARY = new Set(["Entertainment", "Shopping", "Food", "Travel", "Other"]);
+  const waste = () => {
+    const rows = tm.byCategory.filter((c) => DISCRETIONARY.has(c.category));
+    if (!rows.length) return `I don't see discretionary spending (like Shopping, Entertainment or Food) in ${tm.month} yet.`;
+    const lines = rows.map((c) => {
+      const t = s.categoryTrends.find((x) => x.category === c.category);
+      const trend = t && t.changePercent !== null && t.changePercent > 20 ? ` — up ${t.changePercent}% vs your usual ${inr(t.avgPreviousMonths ?? 0)}` : "";
+      return `• ${c.category}: ${inr(c.amount)}${trend}`;
+    });
+    const unusual = s.unusualSpending.length ? `\n\nAlso flagged as unusual:\n${s.unusualSpending.map((u) => `• ${u}`).join("\n")}` : "";
+    return `These are the flexible categories where trimming is easiest in ${tm.month}:\n${lines.join("\n")}\n\nA gentle goal: cut the top one by 10–15% and see how it feels.${unusual}`;
+  };
+  const adjust = () => {
+    if (!s.budgetsThisMonth.length) return "You haven't set budgets for this month yet, so there is nothing to adjust. Set one for your top category and I can compare it with your real spending.";
+    const lines = s.budgetsThisMonth.map((b) => {
+      const t = s.categoryTrends.find((x) => x.category === b.category);
+      const usual = t?.avgPreviousMonths;
+      if (b.status === "exceeded") return `• ${b.category}: ${inr(b.spent)} spent against ${inr(b.limit)}. ${usual && usual > b.limit ? `You usually spend about ${inr(usual)}, so raising it to around ${inr(Math.ceil(usual / 100) * 100)} would be more realistic.` : "Try a weekly cap to pull it back, or raise it only if the spending was essential."}`;
+      if (b.status === "warning") return `• ${b.category}: ${b.percentUsed}% used — watch it for the rest of the month.`;
+      return `• ${b.category}: on track (${b.percentUsed}% used).`;
+    });
+    return `Budget check:\n${lines.join("\n")}`;
+  };
+  if (/unnecessar|waste|wasteful|overspend|cut|reduce|trim/.test(q)) parts.push(waste());
+  if (/adjust|realistic|raise|lower|plan/.test(q) && /budget/.test(q)) parts.push(adjust());
   if (/most|highest|biggest|where/.test(q)) parts.push(top());
   if (/sav(e|ed|ing)/.test(q) && !/improve/.test(q)) parts.push(saved());
   if (/increase|compare|previous|last month|more than/.test(q)) parts.push(change());
-  if (/budget/.test(q)) parts.push(budget());
-  if (/improve|tip|suggest|advice|help|reduce|cut/.test(q)) parts.push(tips());
+  if (/budget/.test(q) && !/adjust|realistic|raise|lower/.test(q)) parts.push(budget());
+  if (/improve|tip|suggest|advice|help/.test(q)) parts.push(tips());
   if (!parts.length || /summary|summar|analy|overview/.test(q)) {
     parts.push(saved(), top(), change());
     if (s.budgetsThisMonth.length) parts.push("Budgets:\n" + budget());

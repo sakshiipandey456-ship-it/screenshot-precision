@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { DatePicker } from "@/components/app/DatePicker";
 import { useMemo, useState } from "react";
 import { Download, Plus, ReceiptText, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -110,9 +111,9 @@ function ExpensesPage() {
               </SelectContent>
             </Select>
             <div className="flex items-center gap-2 sm:col-span-2 xl:col-span-3">
-              <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="From date" className="h-9" />
+              <DatePicker value={from} onChange={setFrom} aria-label="From date" placeholder="From date" className="h-9" />
               <span className="text-xs text-muted-foreground">to</span>
-              <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} aria-label="To date" className="h-9" />
+              <DatePicker value={to} onChange={setTo} aria-label="To date" placeholder="To date" className="h-9" />
               {anyFilter && (
                 <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setKind("all"); setCategory("all"); setFrom(""); setTo(""); }}>
                   <X /> Clear

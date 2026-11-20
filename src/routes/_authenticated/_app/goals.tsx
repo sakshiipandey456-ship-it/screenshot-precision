@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { DatePicker } from "@/components/app/DatePicker";
 import { useState } from "react";
 import { CalendarClock, History, Loader2, Pencil, Plus, Target, Trash2, Trophy } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,7 +17,7 @@ import { HorizontalBars } from "@/components/app/charts";
 import { useToday } from "@/hooks/use-today";
 import { useAddContribution, useContributions, useDeleteContribution, useDeleteGoal, useGoals, useSaveGoal } from "@/lib/data";
 import { goalEta, goalProgress, isoDate, parseDate, type Goal } from "@/lib/finance";
-import { formatINR } from "@/lib/format";
+import { formatDate, formatINR } from "@/lib/format";
 import { contributionSchema, goalSchema, issuesToErrors, type FieldErrors } from "@/lib/schemas";
 import { pageHead } from "@/lib/seo";
 
@@ -25,7 +26,7 @@ export const Route = createFileRoute("/_authenticated/_app/goals")({
   component: GoalsPage,
 });
 
-const fmt = (s: string) => parseDate(s).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+const fmt = formatDate;
 
 function GoalsPage() {
   const today = useToday();
@@ -178,7 +179,7 @@ function GoalDialog({ open, goal, onOpenChange }: { open: boolean; goal: Goal | 
             )}
           </div>
           <FormField id="g-date" label="Target date (optional)" error={errors.target_date}>
-            <Input id="g-date" name="target_date" type="date" defaultValue={goal?.target_date ?? ""} min={isoDate(new Date())} />
+            <DatePicker id="g-date" name="target_date" defaultValue={goal?.target_date ?? ""} minDate={isoDate(new Date())} placeholder="No target date" />
           </FormField>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -215,7 +216,7 @@ function ContributionDialog({ goal, onClose }: { goal: Goal | null; onClose: () 
             <Input id="c-amount" name="amount" type="number" min="0" inputMode="decimal" autoFocus placeholder="500" />
           </FormField>
           <FormField id="c-date" label="Date" error={errors.contributed_on}>
-            <Input id="c-date" name="contributed_on" type="date" defaultValue={isoDate(new Date())} />
+            <DatePicker id="c-date" name="contributed_on" defaultValue={isoDate(new Date())} maxDate={isoDate(new Date())} />
           </FormField>
           <FormField id="c-note" label="Note (optional)" error={errors.note}>
             <Input id="c-note" name="note" maxLength={200} placeholder="Birthday money" />

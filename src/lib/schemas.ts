@@ -5,14 +5,25 @@ const amount = z.coerce
   .positive("Amount must be more than ₹0")
   .max(99_999_999, "That amount is too large")
   .refine((n) => Math.round(n * 100) === Number((n * 100).toFixed(2)), "Use at most 2 decimal places");
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a date");
+const isRealDate = (s: string) => {
+  const [y, m, d] = s.split("-").map(Number);
+  const dt = new Date(y!, (m ?? 1) - 1, d ?? 1);
+  return dt.getFullYear() === y && dt.getMonth() === (m ?? 1) - 1 && dt.getDate() === d;
+};
+const localToday = () => {
+  const n = new Date();
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+};
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a date").refine(isRealDate, "That isn't a valid date");
+/** For things that have already happened (expenses, income, contributions). */
+const pastOrToday = isoDate.refine((s) => s <= localToday(), "Date can't be in the future");
 
 export const transactionSchema = z.object({
   kind: z.enum(["income", "expense"]),
   title: z.string().trim().min(1, "Give it a title").max(100, "Keep the title under 100 characters"),
   amount,
   category: z.string().min(1, "Choose a category"),
-  txn_date: isoDate,
+  txn_date: pastOrToday,
   payment_method: z.string().max(40).nullable(),
   description: z.string().trim().max(500, "Keep notes under 500 characters").nullable(),
 });
@@ -25,7 +36,7 @@ export const goalSchema = z.object({
   saved_amount: z.coerce.number().min(0, "Can't be negative").max(99_999_999),
   target_date: isoDate.nullable(),
 });
-export const contributionSchema = z.object({ amount, contributed_on: isoDate, note: z.string().trim().max(200).nullable() });
+export const contributionSchema = z.object({ amount, contributed_on: pastOrToday, note: z.string().trim().max(200).nullable() });
 export const subscriptionSchema = z.object({
   name: z.string().trim().min(1, "Name it").max(80),
   amount,

@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { DatePicker } from "@/components/app/DatePicker";
 import { useMemo, useState } from "react";
 import { ArrowDownCircle, ArrowUpCircle, BarChart3, LineChart, PieChart, PiggyBank, Plus, ReceiptText, Target, TrendingUp, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,7 +16,11 @@ import { TransactionList } from "@/components/app/TransactionList";
 import { CategoryDonut, IncomeExpenseBars, SpendLine, TrendArea } from "@/components/app/charts";
 import { useToday } from "@/hooks/use-today";
 import { useAuth } from "@/lib/auth-context";
-import { useGoals, useProfile, useTransactions } from "@/lib/data";
+import { useBudgets, useGoals, useProfile, useTransactions } from "@/lib/data";
+import { HealthScoreCard } from "@/components/app/HealthScoreCard";
+import { NamePrompt } from "@/components/app/NamePrompt";
+import { computeHealth } from "@/lib/health";
+import { resolveDisplayName } from "@/lib/name";
 import { categoryBreakdown, dailySeries, goalProgress, inRange, monthlySeries, periodRange, totals, type Period } from "@/lib/finance";
 import { formatINR } from "@/lib/format";
 import { pageHead } from "@/lib/seo";
@@ -38,6 +43,7 @@ function Dashboard() {
   const profile = useProfile(user?.id);
   const txQ = useTransactions();
   const goalsQ = useGoals();
+  const budgetsQ = useBudgets();
   const [period, setPeriod] = useState<Period>("month");
   const [custom, setCustom] = useState({ from: "", to: "" });
   const [dialog, setDialog] = useState<{ open: boolean; initial: TxnDraft | null }>({ open: false, initial: null });
@@ -57,7 +63,14 @@ function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [txns, range.from, range.to, today.toDateString()]);
 
-  const firstName = (profile.data?.full_name || "").split(" ")[0];
+  const displayName = profile.isLoading ? null : resolveDisplayName(profile.data?.full_name, user?.user_metadata);
+  const needsName = !profile.isLoading && !profile.isError && !displayName;
+  const goals0 = goalsQ.data ?? [];
+  const health = useMemo(
+    () => (txQ.data && budgetsQ.data && goalsQ.data ? computeHealth({ txns: txQ.data, budgets: budgetsQ.data, goals: goals0, today }) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [txQ.data, budgetsQ.data, goalsQ.data, today.toDateString()],
+  );
   const periodHint = period === "today" ? "Today" : period === "week" ? "This week" : period === "month" ? "This month" : "Selected dates";
   const hasTx = txns.length > 0;
   const goals = goalsQ.data ?? [];
@@ -65,7 +78,7 @@ function Dashboard() {
   return (
     <>
       <PageHeader
-        title={firstName ? `Hi ${firstName} 👋` : "Welcome 👋"}
+        title={displayName ? `Hi ${displayName} 👋` : "Welcome 👋"}
         description={hasTx ? "Here's where your money stands. Everything updates as you add, edit or delete transactions." : "Add your first income or expense to bring this dashboard to life."}
         actions={
           <Button variant="hero" onClick={() => setDialog({ open: true, initial: null })}>
@@ -73,6 +86,8 @@ function Dashboard() {
           </Button>
         }
       />
+
+      {needsName && <NamePrompt />}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <ToggleGroup type="single" value={period} onValueChange={(v) => v && setPeriod(v as Period)} variant="outline" className="justify-start" aria-label="Time period">
@@ -84,9 +99,9 @@ function Dashboard() {
         </ToggleGroup>
         {period === "custom" && (
           <div className="flex items-center gap-2">
-            <Input type="date" aria-label="From date" value={custom.from} onChange={(e) => setCustom((c) => ({ ...c, from: e.target.value }))} className="h-9 w-40" />
+            <DatePicker aria-label="From date" placeholder="From date" value={custom.from} onChange={(v) => setCustom((c) => ({ ...c, from: v }))} className="h-9 w-40" />
             <span className="text-xs text-muted-foreground">to</span>
-            <Input type="date" aria-label="To date" value={custom.to} onChange={(e) => setCustom((c) => ({ ...c, to: e.target.value }))} className="h-9 w-40" />
+            <DatePicker aria-label="To date" placeholder="To date" value={custom.to} onChange={(v) => setCustom((c) => ({ ...c, to: v }))} className="h-9 w-40" />
           </div>
         )}
       </div>
@@ -104,6 +119,7 @@ function Dashboard() {
         <LoadingState label="Loading your money…" />
       ) : (
         <>
+          <HealthScoreCard compact result={health} loading={!health && !txQ.isError} />
           <div className="grid gap-4 lg:grid-cols-3">
             <Panel title="Income vs expenses" subtitle="Last 6 months" className="lg:col-span-2">
               {hasTx ? <IncomeExpenseBars data={view.monthly} /> : <EmptyState icon={BarChart3} title="No transactions yet" description="Once you record income and expenses, a monthly comparison appears here." />}

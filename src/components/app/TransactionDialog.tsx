@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { DatePicker } from "./DatePicker";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -97,7 +98,7 @@ export function TransactionDialog({ open, onOpenChange, initial }: { open: boole
               <Input id="amount" name="amount" type="number" inputMode="decimal" min="0" step="0.01" defaultValue={initial?.amount ?? ""} placeholder="0" />
             </FormField>
             <FormField id="txn_date" label="Date" error={errors.txn_date}>
-              <Input id="txn_date" name="txn_date" type="date" defaultValue={initial?.txn_date ?? isoDate(new Date())} max="2100-12-31" />
+              <DatePicker id="txn_date" name="txn_date" defaultValue={initial?.txn_date ?? isoDate(new Date())} maxDate={isoDate(new Date())} />
             </FormField>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">

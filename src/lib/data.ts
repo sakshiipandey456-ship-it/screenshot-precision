@@ -85,6 +85,16 @@ export function useProfile(userId: string | undefined) {
     },
   });
 }
+export type AdvisorMessage = { id: string; role: "user" | "assistant"; content: string; source: string | null; created_at: string };
+export function useAdvisorHistory() {
+  return useQuery({
+    queryKey: qk.advisor,
+    queryFn: async (): Promise<AdvisorMessage[]> => {
+      const rows = must(await supabase.from("advisor_messages").select("id,role,content,source,created_at").order("created_at", { ascending: false }).limit(40));
+      return rows.reverse() as AdvisorMessage[];
+    },
+  });
+}
 export function useAvatarUrl(path: string | null | undefined) {
   return useQuery({
     queryKey: ["avatar-url", path],
@@ -177,10 +187,24 @@ export function useSaveSubscription() {
       else must(await supabase.from("subscriptions").insert(row).select("id"));
     },
     [qk.subs],
+    "Subscription saved",
   );
 }
 export function useDeleteSubscription() {
   return useWrite(async (id: string) => must(await supabase.from("subscriptions").delete().eq("id", id).select("id")), [qk.subs], "Subscription deleted");
+}
+export function useSaveProfile(userId: string | undefined) {
+  return useWrite(
+    async (v: { full_name: string; monthly_income: number | null; occupation: Profile["occupation"] }) => {
+      if (!userId) throw new Error("Your session has expired. Please sign in again.");
+      const rows = must(await supabase.from("profiles").update(v).eq("id", userId).select("id"));
+      if (!rows.length) throw new Error("Couldn't save your profile. Please refresh and try again.");
+      // Keep the sign-in record's name in step (best effort; the profile row is the source of truth).
+      await supabase.auth.updateUser({ data: { full_name: v.full_name } }).catch(() => undefined);
+    },
+    [qk.profile],
+    "Profile saved",
+  );
 }
 export function useMarkNotifications() {
   return useWrite(

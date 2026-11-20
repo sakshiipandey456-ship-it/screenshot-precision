@@ -4,11 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useDeleteTransaction } from "@/lib/data";
-import { formatINR } from "@/lib/format";
-import { parseDate, type Txn } from "@/lib/finance";
+import { formatDate, formatINR } from "@/lib/format";
+import { type Txn } from "@/lib/finance";
 import { cn } from "@/lib/utils";
 
-const fmtDate = (s: string) => parseDate(s).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+const fmtDate = formatDate;
 
 export function TransactionList({ txns, onEdit }: { txns: Txn[]; onEdit: (t: Txn) => void }) {
   const del = useDeleteTransaction();
