@@ -6,6 +6,7 @@
   NODE_VERSION = "22"
   # Lovable's managed OAuth route (/~oauth) only exists on Lovable hosting.
   VITE_OAUTH_MODE = "direct"
+  NITRO_PRESET = "netlify"
 
 
 
