@@ -45,6 +45,12 @@ function RegisterPage() {
         setFormError(/registered|exists/i.test(error.message) ? "An account with this email already exists. Try signing in." : error.message);
         return;
       }
+      // An email that's already registered comes back as a user with no identities and
+      // no email is sent, so say so instead of asking the person to wait for one.
+      if (data.user && data.user.identities?.length === 0) {
+        setFormError("An account with this email already exists. Sign in, or use Forgot password on the sign-in page if you don't remember it.");
+        return;
+      }
       if (data.session) navigate({ to: "/dashboard", replace: true });
       else setSentTo(result.data.email);
     } catch {
