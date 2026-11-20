@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { LovableMark } from "@lovable.dev/cloud-auth-js/react";
 import { Button } from "@/components/ui/button";
@@ -27,8 +27,41 @@ const GoogleG = () => (
   </svg>
 );
 
+type GoogleCheck = { url: string } | { error: string };
+
+// Builds the Google authorize URL and asks the auth server whether it can use it.
+// A working provider answers with a redirect to Google (opaque here); a provider
+// without credentials answers 400 with a JSON message. A network failure is not
+// treated as "unavailable" so a flaky connection never hides the button.
+async function checkGoogle(): Promise<GoogleCheck> {
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: { redirectTo: `${window.location.origin}/login`, skipBrowserRedirect: true },
+  });
+  if (error || !data?.url) return { error: friendlyOAuthError(error?.message ?? "Google sign-in failed.") };
+  const check = await fetch(data.url, { redirect: "manual", credentials: "omit" }).catch(() => null);
+  if (check && check.type !== "opaqueredirect" && !check.ok) {
+    const body = (await check.json().catch(() => null)) as { msg?: string } | null;
+    return { error: friendlyOAuthError(body?.msg ?? "Google sign-in failed.") };
+  }
+  return { url: data.url };
+}
+
 export function SocialButtons({ onSignedIn }: { onSignedIn: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
+  // On direct-OAuth builds, hide the Google button when the provider isn't configured
+  // instead of offering a button that can only fail. Nothing shows until the check
+  // finishes, so the button never appears and then disappears.
+  const [googleAvailable, setGoogleAvailable] = useState<boolean | null>(DIRECT_OAUTH ? null : true);
+
+  useEffect(() => {
+    if (!DIRECT_OAUTH) return;
+    let active = true;
+    checkGoogle()
+      .then((result) => { if (active) setGoogleAvailable(!("error" in result)); })
+      .catch(() => { if (active) setGoogleAvailable(true); });
+    return () => { active = false; };
+  }, []);
 
   // On Lovable hosting both providers use Lovable Cloud's managed OAuth, which ships
   // its own Google credentials.
@@ -37,30 +70,18 @@ export function SocialButtons({ onSignedIn }: { onSignedIn: () => void }) {
 
     try {
       if (DIRECT_OAUTH) {
-        // Build the authorize URL without leaving the page, so a misconfigured
-        // provider shows a toast here instead of a raw JSON error page.
-        const { data, error } = await supabase.auth.signInWithOAuth({
-          provider: "google",
-          options: { redirectTo: `${window.location.origin}/login`, skipBrowserRedirect: true },
-        });
-        if (error || !data?.url) {
-          toast.error(friendlyOAuthError(error?.message ?? "Google sign-in failed."));
-          setBusy(null);
-          return;
-        }
-
-        // A working provider answers with a redirect to Google (opaque here);
-        // a broken one answers 400 with a JSON message.
-        const check = await fetch(data.url, { redirect: "manual", credentials: "omit" }).catch(() => null);
-        if (check && check.type !== "opaqueredirect" && !check.ok) {
-          const body = (await check.json().catch(() => null)) as { msg?: string } | null;
-          toast.error(friendlyOAuthError(body?.msg ?? "Google sign-in failed."));
+        // Check again at click time, so a misconfigured provider shows a toast here
+        // instead of a raw JSON error page.
+        const result = await checkGoogle();
+        if ("error" in result) {
+          toast.error(result.error);
+          setGoogleAvailable(false);
           setBusy(null);
           return;
         }
 
         // Redirects to Google; the session is picked up from the URL on /login.
-        window.location.assign(data.url);
+        window.location.assign(result.url);
         return;
       }
 
@@ -85,6 +106,8 @@ export function SocialButtons({ onSignedIn }: { onSignedIn: () => void }) {
 
   const goGoogle = () => signIn("google", "Google");
   const goLovable = () => signIn("lovable", "Lovable");
+
+  if (!googleAvailable) return null;
 
   return (
     <div className="space-y-2.5">

@@ -119,6 +119,18 @@ describe("email authentication pages", () => {
     await waitFor(() => expect(auth.resend).toHaveBeenCalledWith(expect.objectContaining({ email: "person@example.com" })));
   });
 
+  it("tells people an email is already registered instead of waiting for an email that never comes", async () => {
+    auth.signUp.mockResolvedValue({ data: { session: null, user: { id: "x", identities: [] } }, error: null });
+    render(<RegisterPage />);
+    fireEvent.change(screen.getByLabelText("Full name"), { target: { value: "Test Person" } });
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "person@example.com" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "example123" } });
+    fireEvent.change(screen.getByLabelText("Confirm password"), { target: { value: "example123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("An account with this email already exists");
+    expect(screen.queryByRole("heading", { name: "Check your email" })).not.toBeInTheDocument();
+  });
+
   it("reports password reset email failures without showing success", async () => {
     auth.resetPasswordForEmail.mockResolvedValue({ error: { status: 500, message: "Email delivery failure" } });
     render(<ForgotPage />);
