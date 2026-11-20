@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { Field } from "@/components/auth/Field";
 import { SocialButtons } from "@/components/auth/SocialButtons";
+import { ResendConfirmation } from "@/components/auth/ResendConfirmation";
 import { supabase } from "@/integrations/supabase/client";
 import { loginSchema, toFieldErrors, type FieldErrors } from "@/lib/auth-schemas";
 import { safeRedirect, useAuth } from "@/lib/auth-context";
@@ -24,6 +25,7 @@ function LoginPage() {
   const [errors, setErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [email, setEmail] = useState("");
 
   const goNext = () => navigate({ to: safeRedirect(redirect), replace: true });
   // Email links return here (a public page) so the session is restored before opening a private page.
@@ -31,7 +33,7 @@ function LoginPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.hash.slice(1) || window.location.search);
     const desc = params.get("error_description");
-    if (desc) setFormError(/expired|invalid/i.test(desc) ? "That confirmation link has expired or was already used. Sign in below, or create your account again to get a new link." : desc.replace(/\+/g, " "));
+    if (desc) setFormError(/expired|invalid/i.test(desc) ? "That verification link has expired or was already used. Sign in below, or enter your email and use Resend verification email to request a new link." : desc.replace(/\+/g, " "));
   }, []);
 
   useEffect(() => {
@@ -46,13 +48,20 @@ function LoginPage() {
     if (!result.success) return setErrors(toFieldErrors(result.error));
     setErrors({});
     setBusy(true);
-    const { error } = await supabase.auth.signInWithPassword(result.data);
-    setBusy(false);
-    if (error) {
-      setFormError(/confirm/i.test(error.message) ? "Please confirm your email first — check your inbox for the link." : "That email and password don't match. Please try again.");
-      return;
+    try {
+      const { error } = await supabase.auth.signInWithPassword(result.data);
+      if (error) {
+        setFormError(error.code === "email_not_confirmed" || /email.*not confirmed/i.test(error.message)
+          ? "Your email still needs verification. Use Resend verification email below to request a new link."
+          : "That email and password don't match. Please try again.");
+        return;
+      }
+      goNext();
+    } catch {
+      setFormError("We couldn't connect to sign you in. Check your connection and try again.");
+    } finally {
+      setBusy(false);
     }
-    goNext();
   }
 
   return (
@@ -63,7 +72,7 @@ function LoginPage() {
     >
       <SocialButtons onSignedIn={goNext} />
       <form className="space-y-4" onSubmit={onSubmit} noValidate>
-        <Field id="email" label="Email" type="email" autoComplete="email" placeholder="you@college.edu" error={errors.email} />
+        <Field id="email" label="Email" type="email" autoComplete="email" placeholder="you@college.edu" error={errors.email} value={email} onChange={(event) => setEmail(event.target.value)} />
         <Field id="password" label="Password" type="password" autoComplete="current-password" error={errors.password} />
         <div className="-mt-1 text-right text-xs">
           <Link to="/forgot-password" className="text-muted-foreground hover:text-foreground">Forgot password?</Link>
@@ -73,6 +82,7 @@ function LoginPage() {
           {busy && <Loader2 className="animate-spin" />} Sign in
         </Button>
       </form>
+      <ResendConfirmation email={email} redirectTo={safeRedirect(redirect)} />
     </AuthShell>
   );
 }

@@ -23,9 +23,20 @@ function ForgotPage() {
     if (!parsed.success) return setError(parsed.error.issues[0]?.message);
     setError(undefined);
     setBusy(true);
-    await supabase.auth.resetPasswordForEmail(parsed.data, { redirectTo: `${window.location.origin}/reset-password` });
-    setBusy(false);
-    setSent(true);
+    try {
+      const { error: sendError } = await supabase.auth.resetPasswordForEmail(parsed.data, { redirectTo: `${window.location.origin}/reset-password` });
+      if (sendError) {
+        setError(sendError.status === 429 || sendError.code === "over_email_send_rate_limit"
+          ? "Too many email requests. Wait a few minutes before trying again."
+          : "The reset email could not be requested. Please try again in a few minutes.");
+        return;
+      }
+      setSent(true);
+    } catch {
+      setError("We couldn't connect to request the reset email. Check your connection and try again.");
+    } finally {
+      setBusy(false);
+    }
   }
   return (
     <AuthShell title="Forgot your password?" subtitle="We'll email you a link to choose a new one." footer={<Link to="/login" className="font-medium text-primary-glow hover:underline">Back to sign in</Link>}>
