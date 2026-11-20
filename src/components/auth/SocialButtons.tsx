@@ -4,6 +4,19 @@ import { toast } from "sonner";
 import { LovableMark } from "@lovable.dev/cloud-auth-js/react";
 import { Button } from "@/components/ui/button";
 import { lovable } from "@/integrations/lovable/index";
+import { supabase } from "@/integrations/supabase/client";
+
+// Lovable Cloud's managed OAuth runs through a /~oauth route that only Lovable's
+// hosting serves. Netlify builds set VITE_OAUTH_MODE=direct (see netlify.toml) so
+// Google sign-in goes straight to the auth server there instead. That needs a
+// Google client ID and secret saved in the Google provider settings in Lovable Cloud.
+const DIRECT_OAUTH = import.meta.env['VITE_OAUTH_MODE'] === "direct";
+
+function friendlyOAuthError(message: string) {
+  return /missing oauth secret|unsupported provider|provider is not enabled/i.test(message)
+    ? "Google sign-in isn't set up for this site yet. Please use email for now."
+    : message;
+}
 
 const GoogleG = () => (
   <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -17,14 +30,25 @@ const GoogleG = () => (
 export function SocialButtons({ onSignedIn }: { onSignedIn: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
 
-  // Both providers go through Lovable Cloud's managed OAuth, which ships its own
-  // Google credentials. Calling supabase.auth.signInWithOAuth({ provider: "google" })
-  // directly fails with "missing OAuth secret" unless a Google client secret is
-  // configured on the auth server.
+  // On Lovable hosting both providers use Lovable Cloud's managed OAuth, which ships
+  // its own Google credentials.
   async function signIn(provider: "google" | "lovable", label: string) {
     setBusy(provider);
 
     try {
+      if (DIRECT_OAUTH) {
+        // Redirects to Google; the session is picked up from the URL on /login.
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: "google",
+          options: { redirectTo: `${window.location.origin}/login` },
+        });
+        if (error) {
+          toast.error(friendlyOAuthError(error.message));
+          setBusy(null);
+        }
+        return;
+      }
+
       const result = await lovable.auth.signInWithOAuth(provider, {
         redirect_uri: `${window.location.origin}/login`,
       });
@@ -59,15 +83,17 @@ export function SocialButtons({ onSignedIn }: { onSignedIn: () => void }) {
         <GoogleG /> Continue with Google
       </Button>
 
-      <Button
-        type="button"
-        variant="outline"
-        className="h-11 w-full gap-2.5 text-sm font-medium"
-        disabled={!!busy}
-        onClick={goLovable}
-      >
-        <LovableMark className="size-[18px]" /> Continue with Lovable
-      </Button>
+      {!DIRECT_OAUTH && (
+        <Button
+          type="button"
+          variant="outline"
+          className="h-11 w-full gap-2.5 text-sm font-medium"
+          disabled={!!busy}
+          onClick={goLovable}
+        >
+          <LovableMark className="size-[18px]" /> Continue with Lovable
+        </Button>
+      )}
 
       <div className="flex items-center gap-3 py-2 text-xs text-muted-foreground">
         <span className="h-px flex-1 bg-border" />
